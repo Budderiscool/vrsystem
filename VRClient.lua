@@ -1,4 +1,4 @@
--- VR Client Script
+-- VR Client Script (Fixed)
 -- Place this script in StarterPlayer > StarterPlayerScripts
 
 local Players = game:GetService("Players")
@@ -40,6 +40,10 @@ function VRClient.new()
 	-- Visual feedback
 	self.leftHandGui = nil
 	self.rightHandGui = nil
+	self.screenGui = nil
+
+	-- Force first person camera
+	self:setupCamera()
 
 	if self.isVREnabled then
 		self:setup()
@@ -48,6 +52,21 @@ function VRClient.new()
 	end
 
 	return self
+end
+
+function VRClient:setupCamera()
+	-- Force first person view
+	player.CameraMode = Enum.CameraMode.LockFirstPerson
+
+	-- Wait for character and set camera subject
+	if player.Character and player.Character:FindFirstChild("Humanoid") then
+		camera.CameraSubject = player.Character.Humanoid
+	else
+		player.CharacterAdded:Connect(function(character)
+			local humanoid = character:WaitForChild("Humanoid")
+			camera.CameraSubject = humanoid
+		end)
+	end
 end
 
 function VRClient:setup()
@@ -66,38 +85,49 @@ function VRClient:setupDesktopMode()
 	print("VR not enabled - using desktop mode")
 
 	local mouse = player:GetMouse()
+	self:setupVisualFeedback() -- Still show UI for desktop mode
 
 	-- Simple desktop hand simulation
 	self.heartbeatConnection = RunService.Heartbeat:Connect(function()
 		if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
 			local rootPart = player.Character.HumanoidRootPart
-			local mouseCFrame = CFrame.new(mouse.Hit.Position)
+			local cameraCFrame = camera.CFrame
 
-			-- Simulate hands near mouse position
-			self.leftHandCFrame = rootPart.CFrame * CFrame.new(-2, 0, -3) * CFrame.Angles(0, math.rad(-30), 0)
-			self.rightHandCFrame = mouseCFrame * CFrame.new(1, 1, 0)
+			-- Simulate hands relative to camera
+			self.leftHandCFrame = cameraCFrame * CFrame.new(-1.5, -0.5, -2)
+			self.rightHandCFrame = cameraCFrame * CFrame.new(1.5, -0.5, -2)
+
+			-- Move right hand toward mouse direction
+			local mouseRay = camera:ScreenPointToRay(mouse.X, mouse.Y)
+			local mouseDirection = mouseRay.Direction.Unit
+			self.rightHandCFrame = cameraCFrame * CFrame.new(1.5, -0.5, -2) + mouseDirection * 2
 
 			self:sendHandUpdate()
+			self:updateVisualFeedback()
 		end
 	end)
 
 	-- Desktop grab controls
 	mouse.Button1Down:Connect(function()
+		self.rightTriggerPressed = true
 		grabEvent:FireServer("grab", "Right")
 	end)
 
 	mouse.Button1Up:Connect(function()
+		self.rightTriggerPressed = false
 		grabEvent:FireServer("release", "Right")
 	end)
 
 	mouse.KeyDown:Connect(function(key)
 		if key:lower() == "g" then
+			self.leftTriggerPressed = true
 			grabEvent:FireServer("grab", "Left")
 		end
 	end)
 
 	mouse.KeyUp:Connect(function(key)
 		if key:lower() == "g" then
+			self.leftTriggerPressed = false
 			grabEvent:FireServer("release", "Left")
 		end
 	end)
@@ -150,60 +180,82 @@ function VRClient:connectVRInputs()
 	end)
 end
 
-function VRClient:setupHaptics()
-	-- Haptics are handled by HapticService - no setup needed
-	self.hapticEnabled = true
-end
-
 function VRClient:setupVisualFeedback()
-	-- Create GUI feedback for grabbing
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "VRFeedback"
-	screenGui.Parent = player:WaitForChild("PlayerGui")
+	-- Create GUI feedback for hand tracking
+	self.screenGui = Instance.new("ScreenGui")
+	self.screenGui.Name = "VRFeedback"
+	self.screenGui.ResetOnSpawn = false
+	self.screenGui.Parent = player:WaitForChild("PlayerGui")
 
 	-- Left hand indicator
 	self.leftHandGui = Instance.new("Frame")
-	self.leftHandGui.Size = UDim2.new(0, 50, 0, 50)
-	self.leftHandGui.Position = UDim2.new(0, 50, 0, 50)
-	self.leftHandGui.BackgroundColor3 = Color3.new(0, 0, 1)
+	self.leftHandGui.Size = UDim2.new(0, 40, 0, 40)
+	self.leftHandGui.Position = UDim2.new(0, 100, 0.5, -20)
+	self.leftHandGui.BackgroundColor3 = Color3.new(0, 0.5, 1)
 	self.leftHandGui.BorderSizePixel = 0
-	self.leftHandGui.BackgroundTransparency = 0.7
-	self.leftHandGui.Parent = screenGui
+	self.leftHandGui.BackgroundTransparency = 0.3
+	self.leftHandGui.Parent = self.screenGui
 
 	local leftCorner = Instance.new("UICorner")
 	leftCorner.CornerRadius = UDim.new(1, 0)
 	leftCorner.Parent = self.leftHandGui
 
+	-- Left hand label
+	local leftLabel = Instance.new("TextLabel")
+	leftLabel.Size = UDim2.new(1, 0, 1, 0)
+	leftLabel.Position = UDim2.new(0, 0, 0, 0)
+	leftLabel.BackgroundTransparency = 1
+	leftLabel.Text = "L"
+	leftLabel.TextColor3 = Color3.new(1, 1, 1)
+	leftLabel.TextScaled = true
+	leftLabel.Font = Enum.Font.SourceSansBold
+	leftLabel.Parent = self.leftHandGui
+
 	-- Right hand indicator
 	self.rightHandGui = Instance.new("Frame")
-	self.rightHandGui.Size = UDim2.new(0, 50, 0, 50)
-	self.rightHandGui.Position = UDim2.new(1, -100, 0, 50)
-	self.rightHandGui.BackgroundColor3 = Color3.new(1, 0, 0)
+	self.rightHandGui.Size = UDim2.new(0, 40, 0, 40)
+	self.rightHandGui.Position = UDim2.new(1, -140, 0.5, -20)
+	self.rightHandGui.BackgroundColor3 = Color3.new(1, 0.2, 0.2)
 	self.rightHandGui.BorderSizePixel = 0
-	self.rightHandGui.BackgroundTransparency = 0.7
-	self.rightHandGui.Parent = screenGui
+	self.rightHandGui.BackgroundTransparency = 0.3
+	self.rightHandGui.Parent = self.screenGui
 
 	local rightCorner = Instance.new("UICorner")
 	rightCorner.CornerRadius = UDim.new(1, 0)
 	rightCorner.Parent = self.rightHandGui
+
+	-- Right hand label
+	local rightLabel = Instance.new("TextLabel")
+	rightLabel.Size = UDim2.new(1, 0, 1, 0)
+	rightLabel.Position = UDim2.new(0, 0, 0, 0)
+	rightLabel.BackgroundTransparency = 1
+	rightLabel.Text = "R"
+	rightLabel.TextColor3 = Color3.new(1, 1, 1)
+	rightLabel.TextScaled = true
+	rightLabel.Font = Enum.Font.SourceSansBold
+	rightLabel.Parent = self.rightHandGui
 end
 
 function VRClient:updateVR()
 	if not self.isVREnabled then return end
 
 	-- Get VR hand positions
-	local leftCFrame, leftSize = UserInputService:GetUserCFrame(Enum.UserCFrame.LeftHand)
-	local rightCFrame, rightSize = UserInputService:GetUserCFrame(Enum.UserCFrame.RightHand)
-	local headCFrame = UserInputService:GetUserCFrame(Enum.UserCFrame.Head)
+	local success1, leftCFrame = pcall(function()
+		return UserInputService:GetUserCFrame(Enum.UserCFrame.LeftHand)
+	end)
 
-	-- Convert to world space
+	local success2, rightCFrame = pcall(function()
+		return UserInputService:GetUserCFrame(Enum.UserCFrame.RightHand)
+	end)
+
+	-- Convert to world space relative to camera
 	local cameraCFrame = camera.CFrame
 
-	if leftCFrame then
+	if success1 and leftCFrame then
 		self.leftHandCFrame = cameraCFrame * leftCFrame
 	end
 
-	if rightCFrame then
+	if success2 and rightCFrame then
 		self.rightHandCFrame = cameraCFrame * rightCFrame
 	end
 
@@ -218,12 +270,36 @@ function VRClient:sendHandUpdate()
 	handUpdateEvent:FireServer(self.leftHandCFrame, self.rightHandCFrame)
 end
 
+function VRClient:worldToScreenPoint(worldPosition)
+	local screenPoint, onScreen = camera:WorldToScreenPoint(worldPosition)
+	return Vector2.new(screenPoint.X, screenPoint.Y), onScreen
+end
+
 function VRClient:updateVisualFeedback()
 	if not self.leftHandGui or not self.rightHandGui then return end
 
-	-- Update hand GUI transparency based on trigger state
-	local leftTransparency = self.leftTriggerPressed and 0.2 or 0.7
-	local rightTransparency = self.rightTriggerPressed and 0.2 or 0.7
+	-- Update hand GUI positions based on hand world positions
+	local leftScreenPos, leftOnScreen = self:worldToScreenPoint(self.leftHandCFrame.Position)
+	local rightScreenPos, rightOnScreen = self:worldToScreenPoint(self.rightHandCFrame.Position)
+
+	-- Update positions
+	if leftOnScreen then
+		self.leftHandGui.Position = UDim2.new(0, leftScreenPos.X - 20, 0, leftScreenPos.Y - 20)
+		self.leftHandGui.Visible = true
+	else
+		self.leftHandGui.Visible = false
+	end
+
+	if rightOnScreen then
+		self.rightHandGui.Position = UDim2.new(0, rightScreenPos.X - 20, 0, rightScreenPos.Y - 20)
+		self.rightHandGui.Visible = true
+	else
+		self.rightHandGui.Visible = false
+	end
+
+	-- Update transparency based on trigger state
+	local leftTransparency = self.leftTriggerPressed and 0.1 or 0.5
+	local rightTransparency = self.rightTriggerPressed and 0.1 or 0.5
 
 	TweenService:Create(self.leftHandGui, TweenInfo.new(0.1), {BackgroundTransparency = leftTransparency}):Play()
 	TweenService:Create(self.rightHandGui, TweenInfo.new(0.1), {BackgroundTransparency = rightTransparency}):Play()
@@ -233,19 +309,14 @@ function VRClient:triggerHaptic(hand, intensity, duration)
 	if not self.hapticEnabled then return end
 
 	pcall(function()
-		if hand == "Left" then
-			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.LeftHand, intensity)
-			spawn(function()
-				wait(duration)
-				HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.LeftHand, 0)
-			end)
-		else
-			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.RightHand, intensity)
-			spawn(function()
-				wait(duration)
-				HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.RightHand, 0)
-			end)
-		end
+		local inputType = hand == "Left" and Enum.UserInputType.Gamepad1 or Enum.UserInputType.Gamepad2
+		local motor = hand == "Left" and Enum.VibrationMotor.Large or Enum.VibrationMotor.Large
+
+		HapticService:SetMotor(inputType, motor, intensity)
+		spawn(function()
+			wait(duration)
+			HapticService:SetMotor(inputType, motor, 0)
+		end)
 	end)
 end
 
@@ -254,10 +325,14 @@ function VRClient:destroy()
 		self.heartbeatConnection:Disconnect()
 	end
 
+	if self.screenGui then
+		self.screenGui:Destroy()
+	end
+
 	-- Stop any remaining haptic feedback
 	pcall(function()
-		HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.LeftHand, 0)
-		HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.RightHand, 0)
+		HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large, 0)
+		HapticService:SetMotor(Enum.UserInputType.Gamepad2, Enum.VibrationMotor.Large, 0)
 	end)
 end
 
